@@ -41,3 +41,17 @@ title = "h2"
 link = "h2 a"                # the card has two identical links (title and image)
 date = "p.date"              # "Oct 9, 2026"
 summary = "p:not(.date)"     # a plain "p" would match the date first
+
+[[source]]
+id = "figma-forum"
+name = "Figma Forum – Product updates"
+url = "https://forum.figma.com/product-updates-3"
+enabled = true
+needs_js = false
+
+[source.selectors]
+item = "div.qa-topic-block"             # "qa-" classes are test hooks, rarely renamed
+title = ".thread-list-block__title-link"
+link = "a.qa-topic-title"               # a plain "a" would match the author's profile link first
+summary = "p.thread-list-block__content"
+# no date: the only <time> is the date of the last reply, not the publication date

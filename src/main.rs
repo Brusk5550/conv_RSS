@@ -401,6 +401,44 @@ mod tests {
     }
 
     #[test]
+    fn link_selector_skips_author_link() {
+        let html = r#"
+            <div class="qa-topic-block topic-view js-thread">
+              <a class="qa-username" href="https://forum.figma.com/members/djv-115737">djv</a>
+              <a class="qa-topic-title" href="https://forum.figma.com/product-updates-3/topic-1">
+                <span class="thread-list-block__title-link">Topic 1</span>
+                <p class="thread-list-block__content"><span>Summary 1</span></p>
+              </a>
+              <time dateTime="2026-09-25T16:02:45.000Z">16 days ago</time>
+            </div>
+        "#;
+        let selectors = Selectors {
+            item: "div.qa-topic-block".to_string(),
+            title: ".thread-list-block__title-link".to_string(),
+            link: Some("a.qa-topic-title".to_string()),
+            date: None,
+            summary: Some("p.thread-list-block__content".to_string()),
+        };
+
+        let articles = extract_articles(
+            html,
+            "https://forum.figma.com/product-updates-3",
+            &selectors,
+        )
+        .unwrap();
+
+        assert_eq!(articles.len(), 1);
+        assert_eq!(articles[0].title, "Topic 1");
+        assert_eq!(
+            articles[0].link,
+            "https://forum.figma.com/product-updates-3/topic-1"
+        );
+        assert_eq!(articles[0].summary.as_deref(), Some("Summary 1"));
+        // No date selector: the <time> is ignored.
+        assert_eq!(articles[0].date, None);
+    }
+
+    #[test]
     fn parses_config() {
         let text = r#"
             [[source]]
