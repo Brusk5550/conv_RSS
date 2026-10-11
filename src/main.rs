@@ -68,6 +68,12 @@ enum Outcome {
 fn main() -> anyhow::Result<()> {
     let config = load_config(CONFIG_FILE)?;
 
+    // Development mode: `cargo run -- --cache` reads pages from cache/ instead of downloading them.
+    let use_cache = std::env::args().any(|arg| arg == "--cache");
+    if use_cache {
+        println!("Cache mode: pages are read from cache/ when available");
+    }
+
     // One (id, outcome) pair per source, for the summary at the end.
     let mut results = Vec::new();
     let mut failed = 0;
@@ -77,7 +83,7 @@ fn main() -> anyhow::Result<()> {
             Outcome::Skipped
         } else {
             // One failing source must not stop the others: keep the error and continue.
-            match process_source(source) {
+            match process_source(source, use_cache) {
                 Ok(0) => Outcome::Empty,
                 Ok(count) => Outcome::Written(count),
                 Err(error) => {
@@ -121,11 +127,11 @@ fn load_config(path: &str) -> anyhow::Result<Config> {
 
 /// Downloads (or reads from cache) one source, extracts its articles and writes its feed.
 /// Returns the number of articles found.
-fn process_source(source: &Source) -> anyhow::Result<usize> {
+fn process_source(source: &Source, use_cache: bool) -> anyhow::Result<usize> {
     let cache_file = format!("cache/{}.html", source.id);
     let feed_file = format!("feeds/{}.xml", source.id);
 
-    let html = load_html(&source.url, &cache_file)?;
+    let html = load_html(&source.url, &cache_file, use_cache)?;
     let articles = extract_articles(&html, &source.url, &source.selectors)?;
 
     // Zero articles probably means the site changed its HTML: keep the old feed.
@@ -140,9 +146,10 @@ fn process_source(source: &Source) -> anyhow::Result<usize> {
     Ok(articles.len())
 }
 
-/// Returns the page HTML: from the cache file if it exists, otherwise downloads it.
-fn load_html(url: &str, cache_file: &str) -> anyhow::Result<String> {
-    if Path::new(cache_file).exists() {
+/// Returns the page HTML. Downloads it and saves a copy in the cache file.
+/// With `use_cache`, reads the cache file instead when it exists (no request).
+fn load_html(url: &str, cache_file: &str, use_cache: bool) -> anyhow::Result<String> {
+    if use_cache && Path::new(cache_file).exists() {
         println!("Using cached HTML: {cache_file}");
         return Ok(fs::read_to_string(cache_file)?);
     }
@@ -157,7 +164,7 @@ fn load_html(url: &str, cache_file: &str) -> anyhow::Result<String> {
     println!("Downloading {url}");
     let html = client.get(url).send()?.error_for_status()?.text()?;
 
-    // Save the HTML so we can test selectors without downloading again.
+    // Save the HTML so selectors can be tested later with --cache, without downloading again.
     fs::create_dir_all("cache")?;
     fs::write(cache_file, &html)?;
     Ok(html)
