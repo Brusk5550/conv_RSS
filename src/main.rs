@@ -53,20 +53,63 @@ struct Article {
     summary: Option<String>,
 }
 
+/// What happened to one source during this run.
+enum Outcome {
+    /// Feed written with this number of articles.
+    Written(usize),
+    /// No article found: the old feed was kept.
+    Empty,
+    /// The source failed (download error, invalid selector...), with the error message.
+    Failed(String),
+    /// Disabled in the config, or needs JavaScript.
+    Skipped,
+}
+
 fn main() -> anyhow::Result<()> {
     let config = load_config(CONFIG_FILE)?;
 
+    // One (id, outcome) pair per source, for the summary at the end.
+    let mut results = Vec::new();
+    let mut failed = 0;
+
     for source in &config.sources {
-        if !source.enabled || source.needs_js {
-            println!("[{}] skipped (disabled or needs JavaScript)", source.id);
-            continue;
-        }
-        // One failing source must not stop the others: report the error and continue.
-        if let Err(error) = process_source(source) {
-            println!("[{}] ERROR: {error:#}", source.id);
-        }
+        let outcome = if !source.enabled || source.needs_js {
+            Outcome::Skipped
+        } else {
+            // One failing source must not stop the others: keep the error and continue.
+            match process_source(source) {
+                Ok(0) => Outcome::Empty,
+                Ok(count) => Outcome::Written(count),
+                Err(error) => {
+                    failed += 1;
+                    Outcome::Failed(format!("{error:#}"))
+                }
+            }
+        };
+        results.push((source.id.clone(), outcome));
+    }
+
+    println!();
+    println!("Summary");
+    for (id, outcome) in &results {
+        println!("  {}", status_line(id, outcome));
+    }
+
+    // A non-zero exit code tells a scheduler (phase 6) that something went wrong.
+    if failed > 0 {
+        return Err(anyhow!("{failed} source(s) failed"));
     }
     Ok(())
+}
+
+/// One line of the summary, e.g. "OK       tokens-studio      3 articles".
+fn status_line(id: &str, outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Written(count) => format!("OK       {id:<32} {count:>3} articles"),
+        Outcome::Empty => format!("WARNING  {id:<32}   0 articles (feed not updated)"),
+        Outcome::Failed(error) => format!("ERROR    {id:<32} {error}"),
+        Outcome::Skipped => format!("SKIPPED  {id}"),
+    }
 }
 
 /// Reads and parses the TOML config file.
@@ -77,31 +120,24 @@ fn load_config(path: &str) -> anyhow::Result<Config> {
 }
 
 /// Downloads (or reads from cache) one source, extracts its articles and writes its feed.
-fn process_source(source: &Source) -> anyhow::Result<()> {
+/// Returns the number of articles found.
+fn process_source(source: &Source) -> anyhow::Result<usize> {
     let cache_file = format!("cache/{}.html", source.id);
     let feed_file = format!("feeds/{}.xml", source.id);
 
     let html = load_html(&source.url, &cache_file)?;
     let articles = extract_articles(&html, &source.url, &source.selectors)?;
 
-    println!("[{}] {} articles found:", source.id, articles.len());
-    for article in &articles {
-        println!("- {}", article.title);
-        println!("  {}", article.link);
-    }
-
     // Zero articles probably means the site changed its HTML: keep the old feed.
     if articles.is_empty() {
-        println!("WARNING: no articles found, {feed_file} was not updated");
-        return Ok(());
+        return Ok(0);
     }
 
     let channel = build_feed(&source.name, &source.url, &articles);
     fs::create_dir_all("feeds")?;
     let file = fs::File::create(&feed_file)?;
     channel.pretty_write_to(file, b' ', 2)?;
-    println!("Feed written to {feed_file}");
-    Ok(())
+    Ok(articles.len())
 }
 
 /// Returns the page HTML: from the cache file if it exists, otherwise downloads it.
@@ -439,6 +475,24 @@ mod tests {
         assert_eq!(articles[0].summary.as_deref(), Some("Summary 1"));
         // No date selector: the <time> is ignored.
         assert_eq!(articles[0].date, None);
+    }
+
+    #[test]
+    fn status_line_for_each_outcome() {
+        assert_eq!(
+            status_line("demo", &Outcome::Written(3)),
+            format!("OK       {:<32}   3 articles", "demo")
+        );
+        assert!(status_line("demo", &Outcome::Empty).starts_with("WARNING  demo"));
+        assert!(status_line("demo", &Outcome::Empty).ends_with("(feed not updated)"));
+        assert!(
+            status_line("demo", &Outcome::Failed("dns error".to_string()))
+                .starts_with("ERROR    demo")
+        );
+        assert!(
+            status_line("demo", &Outcome::Failed("dns error".to_string())).ends_with("dns error")
+        );
+        assert_eq!(status_line("demo", &Outcome::Skipped), "SKIPPED  demo");
     }
 
     #[test]
