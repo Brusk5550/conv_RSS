@@ -1,0 +1,14 @@
+# One [[source]] block per page to convert into an RSS feed.
+# The feed is written to feeds/<id>.xml.
+
+[[source]]
+id = "tokens-studio"
+name = "Tokens Studio Blog"
+url = "https://tokens.studio/blog"
+enabled = true
+needs_js = false
+
+[source.selectors]
+item = 'a[href^="./blog/"]'   # each article card (the card is itself the link)
+title = "h2"
+# link = "a"                  # optional: element holding the href; if absent, use the item itself

@@ -2,16 +2,42 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use reqwest::Url;
 use rss::{Channel, ChannelBuilder, GuidBuilder, Item, ItemBuilder};
 use scraper::{Html, Selector};
+use serde::Deserialize;
 
-const URL: &str = "https://tokens.studio/blog";
-const FEED_TITLE: &str = "Tokens Studio Blog";
+const CONFIG_FILE: &str = "sources.toml";
 const USER_AGENT: &str = "conv_rss/0.1 (personal RSS converter for tech watch)";
-const CACHE_FILE: &str = "cache/tokens-studio.html";
-const FEED_FILE: &str = "feeds/tokens-studio.xml";
+
+/// The whole sources.toml file.
+#[derive(Deserialize)]
+struct Config {
+    // Each [[source]] block in the file becomes one element of this list.
+    #[serde(rename = "source")]
+    sources: Vec<Source>,
+}
+
+/// One page to convert into an RSS feed.
+#[derive(Deserialize)]
+struct Source {
+    id: String,
+    name: String,
+    url: String,
+    enabled: bool,
+    needs_js: bool,
+    selectors: Selectors,
+}
+
+/// CSS selectors used to find the articles on the page.
+#[derive(Deserialize)]
+struct Selectors {
+    item: String,
+    title: String,
+    // Optional: if absent, the link is read from the item element itself.
+    link: Option<String>,
+}
 
 /// One article found on the page.
 struct Article {
@@ -20,10 +46,34 @@ struct Article {
 }
 
 fn main() -> anyhow::Result<()> {
-    let html = load_html(URL, CACHE_FILE)?;
-    let articles = extract_articles(&html, URL)?;
+    let config = load_config(CONFIG_FILE)?;
 
-    println!("{} articles found:", articles.len());
+    for source in &config.sources {
+        if !source.enabled || source.needs_js {
+            println!("[{}] skipped (disabled or needs JavaScript)", source.id);
+            continue;
+        }
+        process_source(source)?;
+    }
+    Ok(())
+}
+
+/// Reads and parses the TOML config file.
+fn load_config(path: &str) -> anyhow::Result<Config> {
+    let text = fs::read_to_string(path).with_context(|| format!("cannot read {path}"))?;
+    let config: Config = toml::from_str(&text).with_context(|| format!("invalid {path}"))?;
+    Ok(config)
+}
+
+/// Downloads (or reads from cache) one source, extracts its articles and writes its feed.
+fn process_source(source: &Source) -> anyhow::Result<()> {
+    let cache_file = format!("cache/{}.html", source.id);
+    let feed_file = format!("feeds/{}.xml", source.id);
+
+    let html = load_html(&source.url, &cache_file)?;
+    let articles = extract_articles(&html, &source.url, &source.selectors)?;
+
+    println!("[{}] {} articles found:", source.id, articles.len());
     for article in &articles {
         println!("- {}", article.title);
         println!("  {}", article.link);
@@ -31,15 +81,15 @@ fn main() -> anyhow::Result<()> {
 
     // Zero articles probably means the site changed its HTML: keep the old feed.
     if articles.is_empty() {
-        println!("WARNING: no articles found, {FEED_FILE} was not updated");
+        println!("WARNING: no articles found, {feed_file} was not updated");
         return Ok(());
     }
 
-    let channel = build_feed(FEED_TITLE, URL, &articles);
+    let channel = build_feed(&source.name, &source.url, &articles);
     fs::create_dir_all("feeds")?;
-    let file = fs::File::create(FEED_FILE)?;
+    let file = fs::File::create(&feed_file)?;
     channel.pretty_write_to(file, b' ', 2)?;
-    println!("Feed written to {FEED_FILE}");
+    println!("Feed written to {feed_file}");
     Ok(())
 }
 
@@ -67,22 +117,37 @@ fn load_html(url: &str, cache_file: &str) -> anyhow::Result<String> {
 }
 
 /// Finds the articles in the HTML. Relative links are resolved against `base_url`.
-fn extract_articles(html: &str, base_url: &str) -> anyhow::Result<Vec<Article>> {
-    let item_selector = parse_selector(r#"a[href^="./blog/"]"#)?;
-    let title_selector = parse_selector("h2")?;
+fn extract_articles(
+    html: &str,
+    base_url: &str,
+    selectors: &Selectors,
+) -> anyhow::Result<Vec<Article>> {
+    let item_selector = parse_selector(&selectors.item)?;
+    let title_selector = parse_selector(&selectors.title)?;
+    let link_selector = match &selectors.link {
+        Some(css) => Some(parse_selector(css)?),
+        None => None,
+    };
     let base = Url::parse(base_url)?;
     let document = Html::parse_document(html);
 
     let mut articles = Vec::new();
     for item in document.select(&item_selector) {
-        // Title: text of the first <h2> inside the item. No title: skip the item.
+        // Title: text of the first matching element inside the item. No title: skip the item.
         let title = match item.select(&title_selector).next() {
             Some(element) => element.text().collect::<String>().trim().to_string(),
             None => continue,
         };
 
-        // Link: the item is itself the <a>, so read its own href.
-        let href = match item.value().attr("href") {
+        // Link element: found with the link selector, or the item itself if there is none.
+        let link_element = match &link_selector {
+            Some(selector) => match item.select(selector).next() {
+                Some(element) => element,
+                None => continue,
+            },
+            None => item,
+        };
+        let href = match link_element.value().attr("href") {
             Some(href) => href,
             None => continue,
         };
@@ -129,19 +194,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_title_and_absolute_link() {
+    fn extracts_title_and_absolute_link_from_item() {
         let html = r#"
             <nav><a href="./blog">Blog</a></nav>
             <a href="./blog/first-post"><h2> First post </h2><p>Written by</p></a>
             <a href="./blog/no-title"><p>No heading here</p></a>
             <a href="./pricing"><h2>Pricing</h2></a>
         "#;
+        let selectors = Selectors {
+            item: r#"a[href^="./blog/"]"#.to_string(),
+            title: "h2".to_string(),
+            link: None,
+        };
 
-        let articles = extract_articles(html, "https://tokens.studio/blog").unwrap();
+        let articles = extract_articles(html, "https://tokens.studio/blog", &selectors).unwrap();
 
         assert_eq!(articles.len(), 1);
         assert_eq!(articles[0].title, "First post");
         assert_eq!(articles[0].link, "https://tokens.studio/blog/first-post");
+    }
+
+    #[test]
+    fn extracts_link_with_link_selector() {
+        let html = r#"
+            <article><h3>Post A</h3><a href="/posts/a">Read</a></article>
+            <article><h3>Post without link</h3></article>
+        "#;
+        let selectors = Selectors {
+            item: "article".to_string(),
+            title: "h3".to_string(),
+            link: Some("a".to_string()),
+        };
+
+        let articles = extract_articles(html, "https://example.com/news", &selectors).unwrap();
+
+        assert_eq!(articles.len(), 1);
+        assert_eq!(articles[0].title, "Post A");
+        assert_eq!(articles[0].link, "https://example.com/posts/a");
+    }
+
+    #[test]
+    fn parses_config() {
+        let text = r#"
+            [[source]]
+            id = "demo"
+            name = "Demo"
+            url = "https://example.com"
+            enabled = true
+            needs_js = false
+
+            [source.selectors]
+            item = "article"
+            title = "h2"
+        "#;
+
+        let config: Config = toml::from_str(text).unwrap();
+
+        assert_eq!(config.sources.len(), 1);
+        assert_eq!(config.sources[0].id, "demo");
+        assert_eq!(config.sources[0].selectors.link, None);
     }
 
     #[test]
