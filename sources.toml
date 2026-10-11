@@ -69,3 +69,19 @@ title = "h2"
 link = "h2 a"
 summary = "p.card__desc"
 # no date on this page; laws are listed alphabetically
+
+[[source]]
+id = "figma-config"
+name = "Figma Config"
+url = "https://config.figma.com/"
+# Disabled: the home page is a landing page with 1-2 event links, not a list of articles,
+# and its classes are auto-generated. Config announcements already come through figma-forum.
+enabled = false
+needs_js = false
+
+[source.selectors]
+# Untested sketch, kept in case the source is re-enabled (titles would include the "→" arrow).
+item = 'nav[aria-label="Event access"] li'
+title = ".btn-text"
+link = "a"
+summary = "p"
