@@ -12,3 +12,18 @@ needs_js = false
 item = 'a[href^="./blog/"]'   # each article card (the card is itself the link)
 title = "h2"
 # link = "a"                  # optional: element holding the href; if absent, use the item itself
+# date, summary: optional, not available on this page
+
+[[source]]
+id = "interaction-design-foundation"
+name = "Interaction Design Foundation – Literature"
+url = "https://ixdf.org/literature"   # interaction-design.org now redirects here
+enabled = true
+needs_js = false
+
+[source.selectors]
+item = "article.js-article-card"   # "js-" class: hook for the site's JS, more stable than Tailwind classes
+title = "h2"
+link = "a"
+date = "time"        # optional: reads the datetime attribute, or the text if there is none
+summary = "p"        # optional

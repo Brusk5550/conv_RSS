@@ -3,9 +3,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
+use chrono::DateTime;
 use reqwest::Url;
 use rss::{Channel, ChannelBuilder, GuidBuilder, Item, ItemBuilder};
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde::Deserialize;
 
 const CONFIG_FILE: &str = "sources.toml";
@@ -37,12 +38,19 @@ struct Selectors {
     title: String,
     // Optional: if absent, the link is read from the item element itself.
     link: Option<String>,
+    // Optional: element holding the date (its datetime attribute, or its text).
+    date: Option<String>,
+    // Optional: element holding a short excerpt of the article.
+    summary: Option<String>,
 }
 
 /// One article found on the page.
 struct Article {
     title: String,
     link: String,
+    // Publication date in RSS format (RFC 2822), if found and readable.
+    date: Option<String>,
+    summary: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -124,18 +132,17 @@ fn extract_articles(
 ) -> anyhow::Result<Vec<Article>> {
     let item_selector = parse_selector(&selectors.item)?;
     let title_selector = parse_selector(&selectors.title)?;
-    let link_selector = match &selectors.link {
-        Some(css) => Some(parse_selector(css)?),
-        None => None,
-    };
+    let link_selector = parse_optional_selector(&selectors.link)?;
+    let date_selector = parse_optional_selector(&selectors.date)?;
+    let summary_selector = parse_optional_selector(&selectors.summary)?;
     let base = Url::parse(base_url)?;
     let document = Html::parse_document(html);
 
     let mut articles = Vec::new();
     for item in document.select(&item_selector) {
         // Title: text of the first matching element inside the item. No title: skip the item.
-        let title = match item.select(&title_selector).next() {
-            Some(element) => element.text().collect::<String>().trim().to_string(),
+        let title = match first_text(item, &title_selector) {
+            Some(title) => title,
             None => continue,
         };
 
@@ -153,9 +160,49 @@ fn extract_articles(
         };
         let link = base.join(href)?.to_string();
 
-        articles.push(Article { title, link });
+        // Date and summary are optional: no selector or nothing found gives None.
+        let date = match &date_selector {
+            Some(selector) => find_date(item, selector),
+            None => None,
+        };
+        let summary = match &summary_selector {
+            Some(selector) => first_text(item, selector),
+            None => None,
+        };
+
+        articles.push(Article {
+            title,
+            link,
+            date,
+            summary,
+        });
     }
     Ok(articles)
+}
+
+/// Text of the first element matching `selector` inside `item`, trimmed.
+/// Returns None if there is no such element or if its text is empty.
+fn first_text(item: ElementRef, selector: &Selector) -> Option<String> {
+    let element = item.select(selector).next()?;
+    let text = element.text().collect::<String>().trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Finds the date inside `item`: the datetime attribute if present, otherwise the text.
+fn find_date(item: ElementRef, selector: &Selector) -> Option<String> {
+    let element = item.select(selector).next()?;
+    let raw = match element.value().attr("datetime") {
+        Some(value) => value.to_string(),
+        None => element.text().collect::<String>(),
+    };
+    parse_date(raw.trim())
+}
+
+/// Converts an ISO 8601 date ("2025-07-18T00:00:00+00:00") to the RSS format
+/// ("Fri, 18 Jul 2025 00:00:00 +0000"). Unreadable date: None, never a made-up date.
+fn parse_date(raw: &str) -> Option<String> {
+    let date = DateTime::parse_from_rfc3339(raw).ok()?;
+    Some(date.to_rfc2822())
 }
 
 /// Builds an RSS 2.0 channel from the articles.
@@ -172,6 +219,8 @@ fn build_feed(title: &str, page_url: &str, articles: &[Article]) -> Channel {
                 .title(article.title.clone())
                 .link(article.link.clone())
                 .guid(guid)
+                .pub_date(article.date.clone())
+                .description(article.summary.clone())
                 .build()
         })
         .collect();
@@ -187,6 +236,14 @@ fn build_feed(title: &str, page_url: &str, articles: &[Article]) -> Channel {
 /// Parses a CSS selector, turning scraper's error into an anyhow error.
 fn parse_selector(css: &str) -> anyhow::Result<Selector> {
     Selector::parse(css).map_err(|e| anyhow!("invalid CSS selector {css:?}: {e}"))
+}
+
+/// Same as `parse_selector`, for a selector that may be absent from the config.
+fn parse_optional_selector(css: &Option<String>) -> anyhow::Result<Option<Selector>> {
+    match css {
+        Some(css) => Ok(Some(parse_selector(css)?)),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -205,6 +262,8 @@ mod tests {
             item: r#"a[href^="./blog/"]"#.to_string(),
             title: "h2".to_string(),
             link: None,
+            date: None,
+            summary: None,
         };
 
         let articles = extract_articles(html, "https://tokens.studio/blog", &selectors).unwrap();
@@ -224,6 +283,8 @@ mod tests {
             item: "article".to_string(),
             title: "h3".to_string(),
             link: Some("a".to_string()),
+            date: None,
+            summary: None,
         };
 
         let articles = extract_articles(html, "https://example.com/news", &selectors).unwrap();
@@ -231,6 +292,53 @@ mod tests {
         assert_eq!(articles.len(), 1);
         assert_eq!(articles[0].title, "Post A");
         assert_eq!(articles[0].link, "https://example.com/posts/a");
+    }
+
+    #[test]
+    fn extracts_date_and_summary() {
+        let html = r#"
+            <article class="card">
+              <a href="/literature/article/a">Read</a>
+              <h2> Post A </h2>
+              <p> Short excerpt </p>
+              <time datetime="2025-07-18T00:00:00+00:00">1 year ago</time>
+            </article>
+            <article class="card">
+              <a href="/literature/article/b">Read</a>
+              <h2>Post B</h2>
+              <time>yesterday</time>
+            </article>
+        "#;
+        let selectors = Selectors {
+            item: "article.card".to_string(),
+            title: "h2".to_string(),
+            link: Some("a".to_string()),
+            date: Some("time".to_string()),
+            summary: Some("p".to_string()),
+        };
+
+        let articles = extract_articles(html, "https://ixdf.org/literature", &selectors).unwrap();
+
+        assert_eq!(articles.len(), 2);
+        assert_eq!(articles[0].link, "https://ixdf.org/literature/article/a");
+        assert_eq!(
+            articles[0].date.as_deref(),
+            Some("Fri, 18 Jul 2025 00:00:00 +0000")
+        );
+        assert_eq!(articles[0].summary.as_deref(), Some("Short excerpt"));
+        // Unreadable date and missing summary: left empty, nothing made up.
+        assert_eq!(articles[1].date, None);
+        assert_eq!(articles[1].summary, None);
+    }
+
+    #[test]
+    fn parse_date_reads_iso_and_rejects_garbage() {
+        assert_eq!(
+            parse_date("2026-10-01T14:00:00+00:00").as_deref(),
+            Some("Thu, 1 Oct 2026 14:00:00 +0000")
+        );
+        assert_eq!(parse_date("1 week ago"), None);
+        assert_eq!(parse_date(""), None);
     }
 
     #[test]
@@ -260,6 +368,8 @@ mod tests {
         let articles = vec![Article {
             title: "First post".to_string(),
             link: "https://tokens.studio/blog/first-post".to_string(),
+            date: None,
+            summary: None,
         }];
 
         let channel = build_feed("Test feed", "https://tokens.studio/blog", &articles);
