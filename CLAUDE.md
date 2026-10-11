@@ -7,7 +7,6 @@ Certaines sources n'ont pas de flux RSS natif. Ce programme les convertit : il l
 repère la liste d'articles avec des sélecteurs CSS, et écrit un fichier RSS 2.0 par source.
 
 Il remplace un service en ligne (FetchRSS) limité à 5 flux gratuits.
-Contrainte : la solution doit rester **entièrement gratuite**.
 
 ## 2. Ton rôle : coder ET enseigner
 
@@ -176,3 +175,107 @@ GitHub Actions + GitHub Pages, ou Planificateur de tâches Windows + hébergemen
 - Où publier les fichiers XML (voir phase 6).
 - Que faire des sources marquées `needs_js`.
 - Ajout éventuel de Behance dans une v2.
+
+## 13. Hébergement sur VPS (phase 6)
+
+Cette section remplace les pistes de la phase 6 (§11). La phase 6 ne commence que sur demande de l'utilisateur.
+
+### 13.1 Contexte et choix faits
+
+- Un **VPS payant chez Hetzner** (plus petite offre cloud, quelques euros par mois). La contrainte de gratuité est levée pour l'hébergement.
+- **Pas de nom de domaine.** Adresse publique via **sslip.io** : `https://<ip-avec-des-tirets>.sslip.io/` (ex. `203-0-113-5.sslip.io`).
+- Serveur web : **Caddy**, qui obtient et renouvelle seul le certificat HTTPS (Let's Encrypt).
+- **Compilation sur le VPS** : `git clone` depuis GitHub, puis `cargo build --release`.
+- Exécution **1 fois par jour**, planifiée sur le VPS.
+- Système proposé : **Ubuntu LTS** (à confirmer en phase H0).
+
+### 13.2 Ton rôle
+
+Même méthode que pour Rust (§2) : petites étapes, une démonstration, un résumé, puis l'accord de l'utilisateur.
+
+- L'utilisateur a **des notions de Linux** (`ls`, `cd`, `nano`, une connexion SSH), mais il n'a **jamais configuré de serveur**.
+  Explique chaque commande Linux nouvelle et chaque option (`sudo`, `chmod`, `systemctl`…), en faisant le lien avec ce qu'il connaît.
+- Explique **chaque fichier de configuration ligne par ligne** (`Caddyfile`, `sshd_config`, crontab ou timer systemd…).
+- **Les commandes sur le VPS sont tapées par l'utilisateur** dans sa session SSH. Donne la commande, explique-la, puis attends le résultat.
+  Ne te connecte jamais toi-même au VPS sans son accord explicite.
+- **Le compte Hetzner, le choix de l'offre et le paiement sont faits par l'utilisateur seul.** Ne saisis jamais de données de paiement.
+- **Ne jamais afficher, copier dans le chat ou committer** une clé privée, un mot de passe ou un token.
+- Avant chaque commande qui modifie le serveur, dis ce qu'elle change et comment revenir en arrière.
+
+### 13.3 Règles de sécurité (non négociables)
+
+- **SSH par clé uniquement** (clé `ed25519` générée sur Windows).
+  Désactiver la connexion `root` et les mots de passe **seulement après avoir vérifié que la clé fonctionne**.
+  Garder une session SSH ouverte pendant le test, pour ne pas s'enfermer dehors.
+- **Pare-feu** (`ufw`) : seuls les ports 22 (SSH), 80 et 443 (web) sont ouverts.
+- **Mises à jour de sécurité automatiques** (`unattended-upgrades`).
+- Deux utilisateurs :
+  - un utilisateur **admin** personnel, avec `sudo` ;
+  - un utilisateur **`conv_rss`**, sans `sudo`, qui fait tourner le programme.
+  Rien ne tourne en `root`, sauf Caddy, qui gère lui-même ses droits.
+- Caddy ne sert **que** le dossier des flux. Aucun autre fichier du serveur n'est exposé.
+
+### 13.4 Modifications du programme
+
+- Ajouter le lien `atom:link rel="self"` dans chaque flux (recommandation du validateur W3C).
+  L'URL publique de base est lue dans la configuration, pas écrite dans le code.
+  Ajouter un test.
+- Ces modifications se font **sur Windows**, avec les mêmes règles de qualité (§10) et un commit.
+  Elles arrivent ensuite sur le VPS par `git push` (fait par l'utilisateur), puis `git pull`.
+
+### 13.5 Plan de travail
+
+Chaque phase se termine par une démonstration qui marche, un résumé, et l'accord de l'utilisateur.
+
+**Phase H0 — Préparation**
+- Générer une clé SSH `ed25519` sur Windows, avec OpenSSH intégré à Windows (`ssh-keygen`).
+- L'utilisateur crée son compte Hetzner et un serveur Ubuntu LTS en ajoutant sa clé publique.
+- Première connexion : `ssh root@<ip>`.
+- Démo : la connexion SSH fonctionne, sans mot de passe.
+
+**Phase H1 — Sécuriser le serveur**
+- Mettre le système à jour.
+- Créer l'utilisateur admin avec `sudo` et sa clé.
+- Interdire `root` et les mots de passe en SSH.
+- Activer `ufw` et `unattended-upgrades`.
+- Démo : connexion avec l'utilisateur admin ; `ssh root@<ip>` est refusé ; `sudo ufw status` affiche les ports 22, 80 et 443.
+
+**Phase H2 — Rust et le programme sur le VPS**
+- Installer les outils de compilation (`build-essential`, `pkg-config`, `libssl-dev` : sous Linux, `native-tls` utilise OpenSSL).
+- Créer l'utilisateur `conv_rss` et installer Rust avec `rustup` pour lui.
+- `git clone`, puis `cargo build --release`.
+- Démo : un lancement manuel affiche le bilan, avec toutes les sources en `OK`.
+
+**Phase H3 — Lien `atom:link` dans les flux**
+- Modification du programme (§13.4) sur Windows, tests, commit, push, puis `git pull` et recompilation sur le VPS.
+- Démo : `cargo test` passe, et les flux contiennent leur URL publique.
+
+**Phase H4 — Publication avec Caddy**
+- Installer Caddy.
+- Écrire un `Caddyfile` qui sert uniquement le dossier des flux sur l'adresse sslip.io, avec le HTTPS automatique.
+- Démo :
+  - les flux s'ouvrent dans le navigateur en `https://` ;
+  - le validateur W3C accepte l'URL sans recommandation ;
+  - l'utilisateur s'abonne aux 5 flux dans son agrégateur.
+
+**Phase H5 — Exécution quotidienne**
+- Planifier le programme 1 fois par jour, sous l'utilisateur `conv_rss`.
+- Présenter `cron` et les timers `systemd`, avec leurs avantages et leurs limites, puis choisir avec l'utilisateur.
+- Enregistrer la sortie (le bilan) dans un fichier de log.
+- Démo : un lancement forcé du planificateur produit les flux et une ligne dans le log. Le lendemain, on vérifie le log ensemble.
+
+**Phase H6 — Mise à jour et maintenance**
+- Écrire une procédure courte, en anglais, dans un `README` ou un fichier `docs/` :
+  - mettre à jour le programme (`git pull`, `cargo build --release`) ;
+  - lire les logs ;
+  - vérifier que Caddy et le planificateur tournent ;
+  - mettre à jour Rust (`rustup update`).
+- Démo : l'utilisateur fait lui-même une mise à jour complète en suivant la procédure.
+
+### 13.6 Décisions encore ouvertes (hébergement)
+
+- Le dépôt GitHub est-il **public ou privé** ? S'il est privé, le VPS a besoin d'une « deploy key » en lecture seule pour faire `git clone`.
+- **Heure** de l'exécution quotidienne et **fuseau horaire** du serveur.
+- Comment être **prévenu d'une erreur** : simple lecture du log, ou alerte (e-mail…) plus tard ?
+- **Sauvegardes** : option payante de Hetzner, ou rien (le code est sur GitHub et les flux sont régénérés chaque jour).
+- Ubuntu LTS ou Debian (Ubuntu proposé par défaut).
