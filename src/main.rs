@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDate};
 use reqwest::Url;
 use rss::{Channel, ChannelBuilder, GuidBuilder, Item, ItemBuilder};
 use scraper::{ElementRef, Html, Selector};
@@ -180,11 +180,12 @@ fn extract_articles(
     Ok(articles)
 }
 
-/// Text of the first element matching `selector` inside `item`, trimmed.
-/// Returns None if there is no such element or if its text is empty.
+/// Text of the first element matching `selector` inside `item`, with whitespace
+/// collapsed like a browser does. Returns None if there is no such element or if its text is empty.
 fn first_text(item: ElementRef, selector: &Selector) -> Option<String> {
     let element = item.select(selector).next()?;
-    let text = element.text().collect::<String>().trim().to_string();
+    let raw = element.text().collect::<String>();
+    let text = raw.split_whitespace().collect::<Vec<&str>>().join(" ");
     if text.is_empty() { None } else { Some(text) }
 }
 
@@ -198,11 +199,21 @@ fn find_date(item: ElementRef, selector: &Selector) -> Option<String> {
     parse_date(raw.trim())
 }
 
-/// Converts an ISO 8601 date ("2025-07-18T00:00:00+00:00") to the RSS format
-/// ("Fri, 18 Jul 2025 00:00:00 +0000"). Unreadable date: None, never a made-up date.
+/// Converts a date found on a page to the RSS format ("Fri, 18 Jul 2025 00:00:00 +0000").
+/// Unreadable date: None, never a made-up date.
 fn parse_date(raw: &str) -> Option<String> {
-    let date = DateTime::parse_from_rfc3339(raw).ok()?;
-    Some(date.to_rfc2822())
+    // 1. ISO 8601 with time and timezone, e.g. "2025-07-18T00:00:00+00:00".
+    if let Ok(date) = DateTime::parse_from_rfc3339(raw) {
+        return Some(date.to_rfc2822());
+    }
+
+    // 2. Day only, e.g. "Oct 9, 2026". The page gives no time, so use midnight UTC.
+    if let Ok(day) = NaiveDate::parse_from_str(raw, "%b %d, %Y") {
+        let midnight = day.and_hms_opt(0, 0, 0)?;
+        return Some(midnight.and_utc().to_rfc2822());
+    }
+
+    None
 }
 
 /// Builds an RSS 2.0 channel from the articles.
@@ -339,6 +350,54 @@ mod tests {
         );
         assert_eq!(parse_date("1 week ago"), None);
         assert_eq!(parse_date(""), None);
+    }
+
+    #[test]
+    fn parse_date_reads_month_day_year_as_midnight_utc() {
+        assert_eq!(
+            parse_date("Oct 9, 2026").as_deref(),
+            Some("Fri, 9 Oct 2026 00:00:00 +0000")
+        );
+        assert_eq!(
+            parse_date("Sep 30, 2026").as_deref(),
+            Some("Wed, 30 Sep 2026 00:00:00 +0000")
+        );
+        assert_eq!(parse_date("Foo 99, 2026"), None);
+    }
+
+    #[test]
+    fn summary_selector_skips_date_paragraph() {
+        let html = r#"
+            <div class="post group">
+              <header>
+                <p class="date">Oct 9, 2026</p>
+                <h2><a href="/stories/2026/10/09/a">Story A</a></h2>
+                <div class="teaser"><a href="/stories/2026/10/09/a"><img src="x.png"></a></div>
+              </header>
+              <p>The real
+                 summary.</p>
+            </div>
+        "#;
+        let selectors = Selectors {
+            item: "div.post".to_string(),
+            title: "h2".to_string(),
+            link: Some("h2 a".to_string()),
+            date: Some("p.date".to_string()),
+            summary: Some("p:not(.date)".to_string()),
+        };
+
+        let articles = extract_articles(html, "https://dribbble.com/stories", &selectors).unwrap();
+
+        assert_eq!(articles.len(), 1);
+        assert_eq!(
+            articles[0].link,
+            "https://dribbble.com/stories/2026/10/09/a"
+        );
+        assert_eq!(articles[0].summary.as_deref(), Some("The real summary."));
+        assert_eq!(
+            articles[0].date.as_deref(),
+            Some("Fri, 9 Oct 2026 00:00:00 +0000")
+        );
     }
 
     #[test]

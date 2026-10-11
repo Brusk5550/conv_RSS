@@ -27,3 +27,17 @@ title = "h2"
 link = "a"
 date = "time"        # optional: reads the datetime attribute, or the text if there is none
 summary = "p"        # optional
+
+[[source]]
+id = "dribbble-stories"
+name = "Dribbble Stories"
+url = "https://dribbble.com/stories"
+enabled = true
+needs_js = false
+
+[source.selectors]
+item = "div.post"
+title = "h2"
+link = "h2 a"                # the card has two identical links (title and image)
+date = "p.date"              # "Oct 9, 2026"
+summary = "p:not(.date)"     # a plain "p" would match the date first
