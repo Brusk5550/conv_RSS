@@ -111,8 +111,8 @@ needs_js = false
 [source.selectors]
 item = "article"
 title = "h2"
-link = "a"            # attribute href
-date = "time"         # optional
+link = "a"            # optional: element holding the href; if absent, the href of the item itself
+date = "time"         # optional: datetime attribute, or the element text
 summary = "p"         # optional
 ```
 
@@ -131,7 +131,7 @@ L'utilisateur débute avec Git. Pour chaque commande Git : dis ce qu'elle fait, 
 
 - Un commit à la fin de chaque étape qui fonctionne.
 - Messages de commit courts, en anglais, style « Conventional Commits » (`feat:`, `fix:`, `docs:`, `chore:`).
-- `.gitignore` : `target/` et `cache/`.
+- `.gitignore` : `target/`, `cache/` et `feeds/` (fichiers générés).
 - **Ne fais jamais de `git push`, de création de dépôt distant, ni de commande destructive** (`reset --hard`, `push --force`…) sans accord explicite.
 
 ## 10. Qualité
