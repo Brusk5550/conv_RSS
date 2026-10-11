@@ -33,7 +33,9 @@ Règles de travail :
 
 - Système : **Windows**.
 - Éditeur : **Neovim (NvChad)**. Claude Code est utilisé dans le terminal.
-- Rust **n'est pas encore installé** (voir phase 0).
+- Rust **est installé** (phase 0 faite) : toolchain `stable-x86_64-pc-windows-msvc` + « Build Tools » C++ de Microsoft.
+  Ne pas repasser en toolchain `gnu`. La variable d'environnement `CC=gcc` (TDM-GCC, utilisée ailleurs) fait échouer la compilation des crates qui contiennent du C :
+  c'est pour ça que `reqwest` utilise `native-tls` au lieu de `rustls`/`aws-lc`.
 - Git : compte GitHub existant, **peu d'expérience avec Git** (voir §9).
 
 Les commandes données doivent fonctionner dans PowerShell.
@@ -165,16 +167,16 @@ Ajouter les 5 autres une par une. Pour chacune : vérifier si le HTML brut conti
 **Phase 5 — Robustesse et tests**
 Règles du §8, tests du §10, bilan dans le terminal.
 
-**Phase 6 — À décider plus tard (ne pas commencer sans demande)**
-Publication des fichiers XML et exécution **1 fois par jour**.
-Pistes à présenter le moment venu, avec avantages et limites :
-GitHub Actions + GitHub Pages, ou Planificateur de tâches Windows + hébergement des fichiers.
+**Phase 6 — Hébergement sur VPS (ne pas commencer sans demande)**
+Publication des fichiers XML et exécution **1 fois par jour** sur un VPS Hetzner.
+Choix, règles et plan détaillé (phases H0 à H6) : voir §13.
 
 ## 12. Décisions encore ouvertes
 
-- Où publier les fichiers XML (voir phase 6).
-- Que faire des sources marquées `needs_js`.
+- Que faire des sources marquées `needs_js` (aucune pour l'instant ; `figma-config` est désactivée pour une autre raison : ce n'est pas une liste d'articles).
 - Ajout éventuel de Behance dans une v2.
+- Hébergement : décisions encore ouvertes au §13.6.
+  (Décidé : publication sur un VPS Hetzner, voir §13.)
 
 ## 13. Hébergement sur VPS (phase 6)
 
