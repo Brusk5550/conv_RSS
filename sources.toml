@@ -55,3 +55,17 @@ title = ".thread-list-block__title-link"
 link = "a.qa-topic-title"               # a plain "a" would match the author's profile link first
 summary = "p.thread-list-block__content"
 # no date: the only <time> is the date of the last reply, not the publication date
+
+[[source]]
+id = "laws-of-ux"
+name = "Laws of UX"
+url = "https://lawsofux.com/"
+enabled = true
+needs_js = false
+
+[source.selectors]
+item = "article.card"
+title = "h2"
+link = "h2 a"
+summary = "p.card__desc"
+# no date on this page; laws are listed alphabetically
