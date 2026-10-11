@@ -61,7 +61,10 @@ fn main() -> anyhow::Result<()> {
             println!("[{}] skipped (disabled or needs JavaScript)", source.id);
             continue;
         }
-        process_source(source)?;
+        // One failing source must not stop the others: report the error and continue.
+        if let Err(error) = process_source(source) {
+            println!("[{}] ERROR: {error:#}", source.id);
+        }
     }
     Ok(())
 }
