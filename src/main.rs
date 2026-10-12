@@ -293,7 +293,8 @@ fn build_feed(
                 .link(article.link.clone())
                 .guid(guid)
                 .pub_date(article.date.clone())
-                .description(article.summary.clone())
+                // Feed readers treat the description as HTML, but our summary is plain text.
+                .description(article.summary.as_deref().map(escape_html))
                 .build()
         })
         .collect();
@@ -315,6 +316,15 @@ fn build_feed(
     }
 
     channel
+}
+
+/// Escapes plain text so a feed reader displays it as-is when it reads it as HTML
+/// ("<400ms" stays "<400ms" instead of looking like the start of a tag).
+fn escape_html(text: &str) -> String {
+    // "&" first, otherwise the "&" of "&lt;" would be escaped again.
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Public URL of a feed: the base URL followed by "<id>.xml".
@@ -578,6 +588,32 @@ mod tests {
         assert_eq!(item.pub_date(), None);
         // No self_url given: no atom:link.
         assert!(channel.atom_ext().is_none());
+    }
+
+    #[test]
+    fn escape_html_escapes_special_characters() {
+        assert_eq!(escape_html("fast (<400ms)"), "fast (&lt;400ms)");
+        assert_eq!(escape_html("A & B > C"), "A &amp; B &gt; C");
+        // Already escaped text is escaped again: the reader must show "&lt;" literally.
+        assert_eq!(escape_html("&lt;"), "&amp;lt;");
+        assert_eq!(escape_html("plain text"), "plain text");
+    }
+
+    #[test]
+    fn feed_description_is_html_escaped() {
+        let articles = vec![Article {
+            title: "Doherty Threshold".to_string(),
+            link: "https://lawsofux.com/doherty-threshold/".to_string(),
+            date: None,
+            summary: Some("Respond quickly (<400ms).".to_string()),
+        }];
+
+        let channel = build_feed("Test feed", "https://lawsofux.com/", &articles, None);
+
+        assert_eq!(
+            channel.items()[0].description(),
+            Some("Respond quickly (&lt;400ms).")
+        );
     }
 
     #[test]
