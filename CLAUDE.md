@@ -193,7 +193,7 @@ Cette section remplace les pistes de la phase 6 (§11). La phase 6 ne commence q
 - Serveur web : **Caddy**, qui obtient et renouvelle seul le certificat HTTPS (Let's Encrypt).
 - **Compilation sur le VPS** : `git clone` depuis GitHub, puis `cargo build --release`.
 - Exécution **1 fois par jour**, planifiée sur le VPS.
-- Système proposé : **Ubuntu LTS** (à confirmer en phase H0).
+- Système : **Ubuntu 26.04 LTS**. Utilisateur de connexion créé par Infomaniak : `ubuntu` (connexion SSH par clé vérifiée en phase H0).
 
 ### 13.2 Ton rôle
 
@@ -284,4 +284,3 @@ Chaque phase se termine par une démonstration qui marche, un résumé, et l'acc
 - **Heure** de l'exécution quotidienne et **fuseau horaire** du serveur.
 - Comment être **prévenu d'une erreur** : simple lecture du log, ou alerte (e-mail…) plus tard ?
 - **Sauvegardes** : option de l'hébergeur (snapshots), ou rien (le code est sur GitHub et les flux sont régénérés chaque jour).
-- Ubuntu LTS ou Debian (Ubuntu proposé par défaut).
