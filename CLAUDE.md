@@ -168,7 +168,7 @@ Ajouter les 5 autres une par une. Pour chacune : vérifier si le HTML brut conti
 Règles du §8, tests du §10, bilan dans le terminal.
 
 **Phase 6 — Hébergement sur VPS (ne pas commencer sans demande)**
-Publication des fichiers XML et exécution **1 fois par jour** sur un VPS Hetzner.
+Publication des fichiers XML et exécution **1 fois par jour** sur un VPS Infomaniak.
 Choix, règles et plan détaillé (phases H0 à H6) : voir §13.
 
 ## 12. Décisions encore ouvertes
@@ -176,7 +176,7 @@ Choix, règles et plan détaillé (phases H0 à H6) : voir §13.
 - Que faire des sources marquées `needs_js` (aucune pour l'instant ; `figma-config` est désactivée pour une autre raison : ce n'est pas une liste d'articles).
 - Ajout éventuel de Behance dans une v2.
 - Hébergement : décisions encore ouvertes au §13.6.
-  (Décidé : publication sur un VPS Hetzner, voir §13.)
+  (Décidé : publication sur un VPS Infomaniak, voir §13.)
 
 ## 13. Hébergement sur VPS (phase 6)
 
@@ -184,7 +184,11 @@ Cette section remplace les pistes de la phase 6 (§11). La phase 6 ne commence q
 
 ### 13.1 Contexte et choix faits
 
-- Un **VPS payant chez Hetzner** (plus petite offre cloud, quelques euros par mois). La contrainte de gratuité est levée pour l'hébergement.
+- Un **VPS payant chez Infomaniak** : offre **VPS Cloud** de base, avec une IPv4 publique. La contrainte de gratuité est levée pour l'hébergement.
+- **Pas de Docker pour conv_rss** : installation directe sur le système, planification sur le VPS.
+  Docker sera installé plus tard, pour un **futur projet** sur le même VPS.
+  Attention à ce moment-là : un port publié par un conteneur (`-p 8080:80`) peut contourner `ufw` et être accessible depuis Internet.
+  Il faudra le prévoir (publier sur `127.0.0.1`, ou configurer Docker et `ufw` ensemble).
 - **Pas de nom de domaine.** Adresse publique via **sslip.io** : `https://<ip-avec-des-tirets>.sslip.io/` (ex. `203-0-113-5.sslip.io`).
 - Serveur web : **Caddy**, qui obtient et renouvelle seul le certificat HTTPS (Let's Encrypt).
 - **Compilation sur le VPS** : `git clone` depuis GitHub, puis `cargo build --release`.
@@ -200,7 +204,7 @@ Même méthode que pour Rust (§2) : petites étapes, une démonstration, un ré
 - Explique **chaque fichier de configuration ligne par ligne** (`Caddyfile`, `sshd_config`, crontab ou timer systemd…).
 - **Les commandes sur le VPS sont tapées par l'utilisateur** dans sa session SSH. Donne la commande, explique-la, puis attends le résultat.
   Ne te connecte jamais toi-même au VPS sans son accord explicite.
-- **Le compte Hetzner, le choix de l'offre et le paiement sont faits par l'utilisateur seul.** Ne saisis jamais de données de paiement.
+- **Le compte Infomaniak, le choix de l'offre et le paiement sont faits par l'utilisateur seul.** Ne saisis jamais de données de paiement.
 - **Ne jamais afficher, copier dans le chat ou committer** une clé privée, un mot de passe ou un token.
 - Avant chaque commande qui modifie le serveur, dis ce qu'elle change et comment revenir en arrière.
 
@@ -230,9 +234,9 @@ Même méthode que pour Rust (§2) : petites étapes, une démonstration, un ré
 Chaque phase se termine par une démonstration qui marche, un résumé, et l'accord de l'utilisateur.
 
 **Phase H0 — Préparation**
-- Générer une clé SSH `ed25519` sur Windows, avec OpenSSH intégré à Windows (`ssh-keygen`).
-- L'utilisateur crée son compte Hetzner et un serveur Ubuntu LTS en ajoutant sa clé publique.
-- Première connexion : `ssh root@<ip>`.
+- Générer une clé SSH `ed25519` sur Windows, avec OpenSSH intégré à Windows (`ssh-keygen`). *(Fait : `~\.ssh\id_ed25519`, protégée par une passphrase.)*
+- L'utilisateur commande le VPS Cloud chez Infomaniak et installe Ubuntu LTS avec sa clé publique, depuis le Manager.
+- Première connexion : `ssh <utilisateur>@<ip>`. L'utilisateur est `ubuntu` ou `root` selon l'image : voir le Manager.
 - Démo : la connexion SSH fonctionne, sans mot de passe.
 
 **Phase H1 — Sécuriser le serveur**
@@ -279,5 +283,5 @@ Chaque phase se termine par une démonstration qui marche, un résumé, et l'acc
 - Le dépôt GitHub est-il **public ou privé** ? S'il est privé, le VPS a besoin d'une « deploy key » en lecture seule pour faire `git clone`.
 - **Heure** de l'exécution quotidienne et **fuseau horaire** du serveur.
 - Comment être **prévenu d'une erreur** : simple lecture du log, ou alerte (e-mail…) plus tard ?
-- **Sauvegardes** : option payante de Hetzner, ou rien (le code est sur GitHub et les flux sont régénérés chaque jour).
+- **Sauvegardes** : option de l'hébergeur (snapshots), ou rien (le code est sur GitHub et les flux sont régénérés chaque jour).
 - Ubuntu LTS ou Debian (Ubuntu proposé par défaut).
