@@ -1,6 +1,11 @@
 # One [[source]] block per page to convert into an RSS feed.
 # The feed is written to feeds/<id>.xml.
 
+# Public URL where the feeds/ folder is served (VPS, sslip.io name built from the IP).
+# Optional: without it, feeds have no atom:link to themselves.
+# Global settings must come before the first [[source]] block.
+public_base_url = "https://179-237-127-144.sslip.io/"
+
 [[source]]
 id = "tokens-studio"
 name = "Tokens Studio Blog"

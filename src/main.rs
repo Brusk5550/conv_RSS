@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, NaiveDate};
 use reqwest::Url;
+use rss::extension::atom::{AtomExtension, Link};
 use rss::{Channel, ChannelBuilder, GuidBuilder, Item, ItemBuilder};
 use scraper::{ElementRef, Html, Selector};
 use serde::Deserialize;
@@ -15,6 +16,9 @@ const USER_AGENT: &str = "conv_rss/0.1 (personal RSS converter for tech watch)";
 /// The whole sources.toml file.
 #[derive(Deserialize)]
 struct Config {
+    // Public URL where the feeds/ folder is served, e.g. "https://example.com/".
+    // Optional: without it, feeds have no atom:link to themselves.
+    public_base_url: Option<String>,
     // Each [[source]] block in the file becomes one element of this list.
     #[serde(rename = "source")]
     sources: Vec<Source>,
@@ -83,7 +87,7 @@ fn main() -> anyhow::Result<()> {
             Outcome::Skipped
         } else {
             // One failing source must not stop the others: keep the error and continue.
-            match process_source(source, use_cache) {
+            match process_source(source, use_cache, config.public_base_url.as_deref()) {
                 Ok(0) => Outcome::Empty,
                 Ok(count) => Outcome::Written(count),
                 Err(error) => {
@@ -127,9 +131,15 @@ fn load_config(path: &str) -> anyhow::Result<Config> {
 
 /// Downloads (or reads from cache) one source, extracts its articles and writes its feed.
 /// Returns the number of articles found.
-fn process_source(source: &Source, use_cache: bool) -> anyhow::Result<usize> {
+fn process_source(
+    source: &Source,
+    use_cache: bool,
+    public_base_url: Option<&str>,
+) -> anyhow::Result<usize> {
     let cache_file = format!("cache/{}.html", source.id);
     let feed_file = format!("feeds/{}.xml", source.id);
+    // Public URL of this feed, if the config says where feeds are published.
+    let self_url = public_base_url.map(|base| feed_url(base, &source.id));
 
     let html = load_html(&source.url, &cache_file, use_cache)?;
     let articles = extract_articles(&html, &source.url, &source.selectors)?;
@@ -139,7 +149,7 @@ fn process_source(source: &Source, use_cache: bool) -> anyhow::Result<usize> {
         return Ok(0);
     }
 
-    let channel = build_feed(&source.name, &source.url, &articles);
+    let channel = build_feed(&source.name, &source.url, &articles, self_url.as_deref());
     fs::create_dir_all("feeds")?;
     let file = fs::File::create(&feed_file)?;
     channel.pretty_write_to(file, b' ', 2)?;
@@ -263,7 +273,13 @@ fn parse_date(raw: &str) -> Option<String> {
 }
 
 /// Builds an RSS 2.0 channel from the articles.
-fn build_feed(title: &str, page_url: &str, articles: &[Article]) -> Channel {
+/// With `self_url`, the feed also links to its own public address (atom:link rel="self").
+fn build_feed(
+    title: &str,
+    page_url: &str,
+    articles: &[Article],
+    self_url: Option<&str>,
+) -> Channel {
     let items: Vec<Item> = articles
         .iter()
         .map(|article| {
@@ -282,12 +298,29 @@ fn build_feed(title: &str, page_url: &str, articles: &[Article]) -> Channel {
         })
         .collect();
 
-    ChannelBuilder::default()
+    let mut channel = ChannelBuilder::default()
         .title(title)
         .link(page_url)
         .description(format!("Articles from {page_url}, converted by conv_rss"))
         .items(items)
-        .build()
+        .build();
+
+    // <atom:link href="..." rel="self" type="application/rss+xml"/>, recommended by the W3C validator.
+    if let Some(url) = self_url {
+        let mut link = Link::default();
+        link.set_href(url);
+        link.set_rel("self");
+        link.set_mime_type("application/rss+xml".to_string());
+        channel.set_atom_ext(AtomExtension { links: vec![link] });
+    }
+
+    channel
+}
+
+/// Public URL of a feed: the base URL followed by "<id>.xml".
+/// Works with or without a trailing slash on the base URL.
+fn feed_url(public_base_url: &str, id: &str) -> String {
+    format!("{}/{id}.xml", public_base_url.trim_end_matches('/'))
 }
 
 /// Parses a CSS selector, turning scraper's error into an anyhow error.
@@ -533,7 +566,7 @@ mod tests {
             summary: None,
         }];
 
-        let channel = build_feed("Test feed", "https://tokens.studio/blog", &articles);
+        let channel = build_feed("Test feed", "https://tokens.studio/blog", &articles, None);
 
         assert_eq!(channel.items().len(), 1);
         let item = &channel.items()[0];
@@ -543,5 +576,67 @@ mod tests {
         assert_eq!(guid.value(), "https://tokens.studio/blog/first-post");
         assert!(guid.is_permalink());
         assert_eq!(item.pub_date(), None);
+        // No self_url given: no atom:link.
+        assert!(channel.atom_ext().is_none());
+    }
+
+    #[test]
+    fn feed_url_with_or_without_trailing_slash() {
+        let expected = "https://179-237-127-144.sslip.io/laws-of-ux.xml";
+        assert_eq!(
+            feed_url("https://179-237-127-144.sslip.io/", "laws-of-ux"),
+            expected
+        );
+        assert_eq!(
+            feed_url("https://179-237-127-144.sslip.io", "laws-of-ux"),
+            expected
+        );
+    }
+
+    #[test]
+    fn feed_links_to_itself_when_self_url_is_given() {
+        let articles = vec![Article {
+            title: "First post".to_string(),
+            link: "https://tokens.studio/blog/first-post".to_string(),
+            date: None,
+            summary: None,
+        }];
+        let self_url = "https://example.com/tokens-studio.xml";
+
+        let channel = build_feed(
+            "Test feed",
+            "https://tokens.studio/blog",
+            &articles,
+            Some(self_url),
+        );
+        let xml = channel.to_string();
+
+        assert!(xml.contains(r#"xmlns:atom="http://www.w3.org/2005/Atom""#));
+        assert!(xml.contains(r#"<atom:link href="https://example.com/tokens-studio.xml" rel="self" type="application/rss+xml""#));
+    }
+
+    #[test]
+    fn parses_config_with_public_base_url() {
+        let text = r#"
+            public_base_url = "https://example.com/"
+
+            [[source]]
+            id = "demo"
+            name = "Demo"
+            url = "https://example.com"
+            enabled = true
+            needs_js = false
+
+            [source.selectors]
+            item = "article"
+            title = "h2"
+        "#;
+
+        let config: Config = toml::from_str(text).unwrap();
+
+        assert_eq!(
+            config.public_base_url.as_deref(),
+            Some("https://example.com/")
+        );
     }
 }
